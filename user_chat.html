@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>User Chat - Bootstrap 5</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <style>
+    body {
+      background-color: #121212;
+      color: #eee;
+    }
+    #messages {
+      height: calc(100vh - 160px);
+      overflow-y: auto;
+      background-color: #181818;
+      padding: 1rem;
+    }
+    .message {
+      padding: 0.5rem 1rem;
+      border-radius: 0.75rem;
+      margin-bottom: 0.5rem;
+      word-wrap: break-word;
+      max-width: 75%;
+    }
+    .message.admin {
+      background-color: #333;
+      align-self: flex-start;
+    }
+    .message.user {
+      background-color: #0d6efd;
+      align-self: flex-end;
+      margin-left: auto;
+    }
+    .timestamp {
+      font-size: 0.75rem;
+      color: #ccc;
+      text-align: right;
+    }
+    .emoji {
+      font-size: 1.5rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body class="d-flex flex-column">
+
+  <header class="bg-dark text-white d-flex justify-content-between align-items-center px-3 py-2">
+  <button class="btn btn-outline-light btn-sm" onclick="location.href='dashboard.html'">⬅️</button>
+    <h5 class="m-0">Chat with Admin</h5>
+    <div>
+      <button class="btn btn-primary btn-sm me-2" id="calendarButton">📅</button>
+      <button class="btn btn-primary btn-sm" id="toggleKeyboard">⌨️</button>
+    </div>
+  </header>
+
+  <main class="flex-grow-1 d-flex flex-column" id="messages"></main>
+  <div class="px-3 py-1 fst-italic text-secondary d-none" id="typingIndicator">Admin is typing...</div>
+
+  <div class="p-2 border-top bg-dark">
+    <div class="mb-2" id="presetMessages" class="d-flex flex-wrap gap-2"></div>
+
+    <div id="emojiPicker" class="d-flex flex-wrap gap-2 mb-2 d-none"></div>
+
+    <div id="typingArea" class="d-none d-flex align-items-center gap-2">
+      <input type="text" class="form-control" id="messageInput" placeholder="Type a message..." autocomplete="off">
+      <button class="btn btn-outline-light" type="button" id="emojiBtn">😊</button>
+      <button class="btn btn-success" id="sendBtn">Send</button>
+    </div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+  <script>
+    const firebaseConfig = {
+     apiKey: "AIzaSyDeEV8xcpBARRDszfiLh0_caIsW5nK7ezI",
+  authDomain: "lime-bootstrap.firebaseapp.com",
+  projectId: "lime-bootstrap",
+  storageBucket: "lime-bootstrap.firebasestorage.app",
+  messagingSenderId: "272371593790",
+  appId: "1:272371593790:web:6763f97e108c1c6a38976f",
+  measurementId: "G-1LEDTZ6E9X"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    const adminUID = "hpvlaLV2nuaGXHwe3SO4SDP4eeL2";
+
+    let currentUser = null;
+    let messagesUnsub = null;
+    let typingUnsub = null;
+
+    const messagesEl = document.getElementById('messages');
+    const messageInput = document.getElementById('messageInput');
+    const calendarButton = document.getElementById('calendarButton');
+    const toggleKeyboard = document.getElementById('toggleKeyboard');
+    const typingArea = document.getElementById('typingArea');
+    const presetContainer = document.getElementById('presetMessages');
+    const emojiBtn = document.getElementById('emojiBtn');
+    const emojiPicker = document.getElementById('emojiPicker');
+    const typingIndicator = document.getElementById('typingIndicator');
+
+    auth.onAuthStateChanged(user => {
+      if (!user) return location.href = "index.html";
+      if (user.uid === adminUID) return location.href = "admin_chat.html";
+
+      currentUser = user;
+
+      calendarButton.onclick = () => {
+        window.location.href = `calendar.html?userId=${currentUser.uid}`;
+      };
+
+      loadMessages();
+      loadPresetMessages();
+      watchAdminTyping();
+    });
+
+    function formatAMPM(date) {
+      let hours = date.getHours();
+      let minutes = date.getMinutes();
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      hours = hours % 12 || 12;
+      minutes = minutes < 10 ? '0' + minutes : minutes;
+      return hours + ':' + minutes + ' ' + ampm;
+    }
+
+    function loadMessages() {
+      const chatId = [adminUID, currentUser.uid].sort().join('_');
+      const msgsRef = db.collection('messages').doc(chatId).collection('msgs').orderBy('timestamp', 'asc');
+
+      if (messagesUnsub) messagesUnsub();
+
+      messagesUnsub = msgsRef.onSnapshot(snapshot => {
+        messagesEl.innerHTML = '';
+        snapshot.forEach(doc => {
+          const msg = doc.data();
+          const msgDiv = document.createElement('div');
+          msgDiv.classList.add('message', 'd-flex', 'flex-column', msg.from === adminUID ? 'admin' : 'user');
+
+          const textSpan = document.createElement('div');
+          textSpan.textContent = msg.text;
+
+          const timestampSpan = document.createElement('div');
+          timestampSpan.classList.add('timestamp');
+          const time = msg.timestamp?.toDate?.();
+          timestampSpan.textContent = time ? formatAMPM(time) : '';
+
+          msgDiv.appendChild(textSpan);
+          msgDiv.appendChild(timestampSpan);
+
+          messagesEl.appendChild(msgDiv);
+        });
+
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+
+        snapshot.docs.forEach(doc => {
+          const msg = doc.data();
+          if (msg.to === currentUser.uid && !msg.read) {
+            doc.ref.update({ read: true });
+          }
+        });
+      });
+    }
+
+    async function sendMessage(text) {
+      const chatId = [adminUID, currentUser.uid].sort().join('_');
+      const msgsRef = db.collection('messages').doc(chatId).collection('msgs');
+
+      await msgsRef.add({
+        text,
+        from: currentUser.uid,
+        to: adminUID,
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+        read: false
+      });
+
+      db.collection('typing_status')
+        .doc(adminUID + "_" + currentUser.uid)
+        .set({ typing: false }, { merge: true });
+    }
+
+    document.getElementById('sendBtn').addEventListener('click', async () => {
+      const text = messageInput.value.trim();
+      if (!text) return;
+      await sendMessage(text);
+      messageInput.value = '';
+    });
+
+    toggleKeyboard.addEventListener('click', () => {
+      typingArea.classList.toggle('d-none');
+      typingArea.classList.toggle('d-flex');
+    });
+
+    emojiBtn.addEventListener('click', () => {
+      emojiPicker.classList.toggle('d-none');
+      emojiPicker.classList.toggle('d-flex');
+    });
+
+    function loadPresetMessages() {
+      const ref = db.collection('preset_messages').doc(currentUser.uid);
+      ref.get().then(doc => {
+        let list = doc.exists ? doc.data().messages || [] : [];
+        renderPresetButtons(list);
+      });
+    }
+
+    function renderPresetButtons(messages) {
+      presetContainer.innerHTML = '';
+      messages.forEach(msg => {
+        const btn = document.createElement('button');
+        btn.classList.add('btn', 'btn-secondary', 'btn-sm', 'me-2', 'mb-1');
+        btn.textContent = msg;
+        btn.onclick = () => sendMessage(msg);
+        presetContainer.appendChild(btn);
+      });
+
+      const addBtn = document.createElement('button');
+      addBtn.classList.add('btn', 'btn-outline-light', 'btn-sm', 'me-2', 'mb-1');
+      addBtn.textContent = '➕';
+      addBtn.onclick = async () => {
+        const newMsg = prompt("Enter new preset message:");
+        if (newMsg) {
+          const ref = db.collection('preset_messages').doc(currentUser.uid);
+          const doc = await ref.get();
+          let current = doc.exists ? doc.data().messages || [] : [];
+          current.push(newMsg);
+          await ref.set({ messages: current });
+          renderPresetButtons(current);
+        }
+      };
+      presetContainer.appendChild(addBtn);
+    }
+
+    function watchAdminTyping() {
+      const typingRef = db.collection('typing_status').doc(adminUID + "_" + currentUser.uid);
+      typingUnsub = typingRef.onSnapshot(doc => {
+        if (doc.exists && doc.data().typing) {
+          typingIndicator.classList.remove('d-none');
+        } else {
+          typingIndicator.classList.add('d-none');
+        }
+      });
+    }
+
+    // Emoji buttons setup
+    const emojiList = ['😊', '👍', '❤️', '😂', '😢', '😮'];
+    emojiList.forEach(emoji => {
+      const span = document.createElement('span');
+      span.classList.add('emoji');
+      span.textContent = emoji;
+      span.onclick = () => sendMessage(emoji);
+      emojiPicker.appendChild(span);
+    });
+  </script>
+</body>
+</html>

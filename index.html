@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Login/Register - Bootstrap Version</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+
+<body class="bg-light d-flex justify-content-center align-items-center vh-100">
+
+  <div class="card shadow p-4" style="max-width: 400px; width: 100%;">
+    <h1 class="text-center mb-4">Secure Portal</h1>
+
+    <!-- Tabs Navigation -->
+    <ul class="nav nav-tabs mb-3 justify-content-center" id="authTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="login-tab" data-bs-toggle="tab" data-bs-target="#loginTab" type="button"
+          role="tab">Login</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="register-tab" data-bs-toggle="tab" data-bs-target="#registerTab" type="button"
+          role="tab">Register</button>
+      </li>
+    </ul>
+
+    <!-- Tabs Content -->
+    <div class="tab-content" id="authTabsContent">
+
+      <!-- Login Tab -->
+      <div class="tab-pane fade show active" id="loginTab" role="tabpanel">
+        <form onsubmit="login(); return false;">
+          <div class="mb-3">
+            <input type="email" id="loginEmail" class="form-control" placeholder="Email" required>
+          </div>
+          <div class="mb-3">
+            <input type="password" id="loginPassword" class="form-control" placeholder="Password" required>
+          </div>
+          <button type="submit" class="btn btn-primary w-100">Login</button>
+        </form>
+        <p id="loginStatus" class="mt-2 fw-semibold text-danger"></p>
+      </div>
+
+      <!-- Register Tab -->
+      <div class="tab-pane fade" id="registerTab" role="tabpanel">
+        <form onsubmit="register(); return false;">
+          <div class="mb-3">
+            <input type="text" id="regName" class="form-control" placeholder="Name" required>
+          </div>
+          <div class="mb-3">
+            <input type="email" id="regEmail" class="form-control" placeholder="Email" required>
+          </div>
+          <div class="mb-3">
+            <input type="password" id="regPassword" class="form-control" placeholder="Password" required>
+          </div>
+          <button type="submit" class="btn btn-success w-100">Register</button>
+        </form>
+        <p id="registerStatus" class="mt-2 fw-semibold text-danger"></p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyDeEV8xcpBARRDszfiLh0_caIsW5nK7ezI",
+  authDomain: "lime-bootstrap.firebaseapp.com",
+  projectId: "lime-bootstrap",
+  storageBucket: "lime-bootstrap.firebasestorage.app",
+  messagingSenderId: "272371593790",
+  appId: "1:272371593790:web:6763f97e108c1c6a38976f",
+  measurementId: "G-1LEDTZ6E9X"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    const adminEmail = "akshaylinson24@gmail.com";
+    const adminUID = "hpvlaLV2nuaGXHwe3SO4SDP4eeL2";
+
+    async function register() {
+      const name = document.getElementById('regName').value.trim();
+      const email = document.getElementById('regEmail').value.trim();
+      const password = document.getElementById('regPassword').value;
+      const statusEl = document.getElementById('registerStatus');
+      statusEl.textContent = '';
+      statusEl.classList.remove('text-success');
+
+      if (!name || !email || !password) {
+        statusEl.textContent = 'Please fill all fields.';
+        return;
+      }
+
+      try {
+        const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+        const user = userCredential.user;
+        await user.updateProfile({ displayName: name });
+
+        await db.collection("users").doc(user.uid).set({
+          name: name,
+          email: email,
+          uid: user.uid,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+
+        await db.collection("calendars").doc(user.uid).set({});
+
+        statusEl.textContent = 'Registration successful!';
+        statusEl.classList.add('text-success');
+
+        document.getElementById('regName').value = '';
+        document.getElementById('regEmail').value = '';
+        document.getElementById('regPassword').value = '';
+
+        // Switch to login tab
+        const loginTab = new bootstrap.Tab(document.querySelector('#login-tab'));
+        loginTab.show();
+
+      } catch (error) {
+        statusEl.textContent = error.message;
+      }
+    }
+
+    async function login() {
+      const email = document.getElementById('loginEmail').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      const statusEl = document.getElementById('loginStatus');
+      statusEl.textContent = '';
+      statusEl.classList.remove('text-success');
+
+      if (!email || !password) {
+        statusEl.textContent = 'Please enter email and password.';
+        return;
+      }
+
+      try {
+        const userCredential = await auth.signInWithEmailAndPassword(email, password);
+        const user = userCredential.user;
+
+        statusEl.textContent = 'Login successful! Redirecting...';
+        statusEl.classList.add('text-success');
+
+        setTimeout(() => {
+          if (user.email === adminEmail || user.uid === adminUID) {
+            window.location.href = 'admin_chat.html';
+          } else {
+            window.location.href = 'dashboard.html';
+          }
+        }, 1500);
+
+      } catch (error) {
+        statusEl.textContent = error.message;
+      }
+    }
+  </script>
+
+</body>
+
+</html>

@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chat Page</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body {
+      background-color: #121212;
+      color: #eee;
+      height: 100vh;
+      margin: 0;
+      overflow: hidden;
+    }
+    #userList {
+      overflow-y: auto;
+      background-color: #1e1e1e;
+      height: 100vh;
+    }
+    .userItem {
+      cursor: pointer;
+    }
+    .userItem:hover,
+    .userItem.active {
+      background-color: #333;
+    }
+    .newMsgBadge {
+      font-size: 0.75em;
+      border-radius: 50px;
+    }
+    #chatMessages {
+      overflow-y: auto;
+      background-color: #181818;
+    }
+    #chatInput {
+      background-color: #2a2a2a;
+      color: #eee;
+    }
+  </style>
+</head>
+<body>
+  <div class="container-fluid">
+    <div class="row">
+      <!-- Sidebar: User List -->
+      <div class="col-md-3 p-0 d-none d-md-block" id="userList"></div>
+
+      <!-- Main Chat Area -->
+      <div class="col-md-9 col-12 d-flex flex-column p-0" id="chatSection">
+        <!-- Chat Header -->
+        <div class="d-flex justify-content-between align-items-center bg-dark text-white p-3 border-bottom border-secondary" id="chatHeader">
+          <h2 class="h5 mb-0" id="chatWith">Select a user to chat</h2>
+          <button class="btn btn-sm btn-secondary position-relative" id="calendarBtn">
+            📅 Calendar
+            <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger d-none" id="calendarBadge">0</span>
+          </button>
+        </div>
+
+        <!-- Chat Messages -->
+        <div class="flex-grow-1 p-3" id="chatMessages"></div>
+
+        <!-- Chat Input -->
+        <div class="p-3 border-top border-secondary bg-dark d-flex d-none" id="chatInputSection">
+          <input type="text" class="form-control me-2" id="chatInput" placeholder="Type a message..." />
+          <button class="btn btn-primary" id="sendBtn">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+  <!-- Chat Logic -->
+  <script>
+    // Firebase Config
+    const firebaseConfig = {
+      apiKey: "AIzaSyDeEV8xcpBARRDszfiLh0_caIsW5nK7ezI",
+  authDomain: "lime-bootstrap.firebaseapp.com",
+  projectId: "lime-bootstrap",
+  storageBucket: "lime-bootstrap.firebasestorage.app",
+  messagingSenderId: "272371593790",
+  appId: "1:272371593790:web:6763f97e108c1c6a38976f",
+  measurementId: "G-1LEDTZ6E9X"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    const userListEl = document.getElementById('userList');
+    const chatWithEl = document.getElementById('chatWith');
+    const chatMessagesEl = document.getElementById('chatMessages');
+    const chatInputSection = document.getElementById('chatInputSection');
+    const chatInput = document.getElementById('chatInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const calendarBtn = document.getElementById('calendarBtn');
+    const calendarBadge = document.getElementById('calendarBadge');
+
+    const adminUID = "hpvlaLV2nuaGXHwe3SO4SDP4eeL2";
+
+    let currentUser = null, selectedUser = null, chatDocID = null;
+    let unsubscribeMessages = null, unsubscribeCalendarBadge = null;
+
+    const formatTimestamp = ts => ts ? (ts.toDate ? ts.toDate() : new Date(ts)).toLocaleString() : "";
+
+    const getChatDocId = (uid1, uid2) => [uid1, uid2].sort().join('_');
+
+    function loadChatMessages(docId) {
+      if (unsubscribeMessages) unsubscribeMessages();
+      chatMessagesEl.innerHTML = '';
+      unsubscribeMessages = db.collection("chats").doc(docId).collection("messages")
+        .orderBy("timestamp")
+        .onSnapshot(snapshot => {
+          chatMessagesEl.innerHTML = "";
+          snapshot.forEach(doc => {
+            const msg = doc.data();
+            const sender = msg.sender === currentUser.uid ? "You" : selectedUser.name || "User";
+            const div = document.createElement("div");
+            div.textContent = `${sender}: ${msg.text} (${formatTimestamp(msg.timestamp)})`;
+            chatMessagesEl.appendChild(div);
+          });
+          chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+        });
+    }
+
+    function loadUserList() {
+      if (currentUser.uid !== adminUID) return;
+
+      db.collection("users").onSnapshot(snapshot => {
+        userListEl.innerHTML = "";
+        snapshot.forEach(doc => {
+          const userData = doc.data();
+          if (userData.uid === adminUID) return;
+
+          const chatId = getChatDocId(adminUID, userData.uid);
+          db.collection("chats").doc(chatId).collection("messages")
+            .orderBy("timestamp", "desc").limit(1).get().then(msgSnap => {
+              let lastMsgTime = msgSnap.empty ? "" : formatTimestamp(msgSnap.docs[0].data().timestamp);
+              db.collection("chats").doc(chatId).collection("messages")
+                .where("readBy", "not-in", [currentUser.uid])
+                .get().then(unreadSnap => {
+                  const unreadCount = unreadSnap.size;
+                  const userItem = document.createElement("div");
+                  userItem.className = "userItem p-3 border-bottom border-secondary text-white position-relative";
+                  userItem.dataset.uid = userData.uid;
+                  userItem.dataset.name = userData.name;
+                  userItem.innerHTML = `
+                    <div class="fw-bold">${userData.name}</div>
+                    <div class="small text-muted">${lastMsgTime}</div>
+                    ${unreadCount > 0 ? `<span class="badge bg-danger position-absolute top-0 end-0 mt-2 me-3 newMsgBadge">${unreadCount}</span>` : ""}
+                  `;
+                  userItem.onclick = () => selectUser(userData);
+                  userListEl.appendChild(userItem);
+                });
+            });
+        });
+      });
+    }
+
+    function selectUser(userData) {
+      selectedUser = userData;
+      chatWithEl.textContent = `Chat with ${userData.name}`;
+      chatInputSection.classList.remove("d-none");
+      chatDocID = getChatDocId(currentUser.uid, userData.uid);
+      loadChatMessages(chatDocID);
+      setupCalendarBadge();
+      markMessagesRead(chatDocID);
+    }
+
+    async function markMessagesRead(chatId) {
+      const msgsRef = db.collection("chats").doc(chatId).collection("messages");
+      const unreadMsgs = await msgsRef.where("readBy", "not-in", [currentUser.uid]).get();
+      const batch = db.batch();
+      unreadMsgs.forEach(doc => {
+        batch.update(doc.ref, { readBy: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
+      });
+      await batch.commit();
+    }
+
+    async function sendMessage() {
+      const text = chatInput.value.trim();
+      if (!text || !chatDocID) return;
+      await db.collection("chats").doc(chatDocID).collection("messages").add({
+        text,
+        sender: currentUser.uid,
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+        readBy: [currentUser.uid]
+      });
+      chatInput.value = "";
+      await db.collection("chats").doc(chatDocID).set({
+        lastMessageTimestamp: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
+
+    function setupCalendarBadge() {
+      if (unsubscribeCalendarBadge) unsubscribeCalendarBadge();
+      calendarBadge.classList.add("d-none");
+      if (!chatDocID) return;
+      unsubscribeCalendarBadge = db.collection("chats").doc(chatDocID)
+        .collection("calendarEvents")
+        .where("createdAt", ">", firebase.firestore.Timestamp.now())
+        .onSnapshot(snapshot => {
+          if (snapshot.size > 0) {
+            calendarBadge.classList.remove("d-none");
+            calendarBadge.textContent = snapshot.size;
+          } else {
+            calendarBadge.classList.add("d-none");
+          }
+        });
+    }
+
+    calendarBtn.addEventListener("click", () => {
+      if (!chatDocID) return;
+      window.location.href = `calendar.html?chatId=${chatDocID}`;
+    });
+
+    sendBtn.addEventListener("click", sendMessage);
+    chatInput.addEventListener("keydown", e => {
+      if (e.key === "Enter") sendMessage();
+    });
+
+    auth.onAuthStateChanged(user => {
+      if (user) {
+        currentUser = user;
+        if (currentUser.uid === adminUID) {
+          chatInputSection.classList.add("d-none");
+          chatWithEl.textContent = "Select a user to chat";
+          loadUserList();
+        } else {
+          userListEl.classList.add("d-none");
+          selectedUser = { uid: adminUID, name: "Admin" };
+          chatWithEl.textContent = "Chat with Admin";
+          chatInputSection.classList.remove("d-none");
+          chatDocID = getChatDocId(currentUser.uid, adminUID);
+          loadChatMessages(chatDocID);
+          setupCalendarBadge();
+          markMessagesRead(chatDocID);
+        }
+      } else {
+        alert("Please login to access chat.");
+        window.location.href = "login.html";
+      }
+    });
+  </script>
+</body>
+</html>

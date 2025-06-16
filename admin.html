@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin Chat Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <style>
+    body {
+      background-color: #121212;
+      color: #eee;
+    }
+    .userItem:hover {
+      background-color: #333;
+    }
+    .message {
+      margin-bottom: 8px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      word-wrap: break-word;
+    }
+    .message.admin {
+      background-color: #0d6efd;
+      color: #fff;
+      align-self: end;
+    }
+    .message.user {
+      background-color: #333;
+      color: #fff;
+      align-self: start;
+    }
+    .notificationBadge {
+      background: #e53935;
+      color: #fff;
+      border-radius: 12px;
+      padding: 2px 6px;
+      font-size: 12px;
+      margin-left: 5px;
+    }
+  </style>
+</head>
+
+<body class="vh-100 d-flex">
+
+  <div class="border-end bg-dark" style="width:300px; overflow-y:auto;">
+    <h5 class="bg-secondary text-white p-2 m-0">Users</h5>
+    <div id="userItems" class="list-group"></div>
+  </div>
+
+  <div class="d-flex flex-column flex-grow-1">
+    <div class="bg-secondary text-white d-flex justify-content-between align-items-center p-2">
+      <div id="chatWith">Select a user to chat</div>
+      <button id="calendarButton" class="btn btn-sm btn-primary d-none">📅 Calendar</button>
+    </div>
+
+    <div id="messages" class="flex-grow-1 d-flex flex-column p-3" style="overflow-y:auto; background:#181818;"></div>
+
+    <form id="messageForm" class="d-none border-top p-2 bg-dark d-flex">
+      <input type="text" id="messageInput" class="form-control me-2" placeholder="Type a message..." />
+      <button type="submit" class="btn btn-success">Send</button>
+    </form>
+  </div>
+
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+  <script>
+    // Your Firebase config here
+    const firebaseConfig = {
+      apiKey: "AIzaSyDeEV8xcpBARRDszfiLh0_caIsW5nK7ezI",
+  authDomain: "lime-bootstrap.firebaseapp.com",
+  projectId: "lime-bootstrap",
+  storageBucket: "lime-bootstrap.firebasestorage.app",
+  messagingSenderId: "272371593790",
+  appId: "1:272371593790:web:6763f97e108c1c6a38976f",
+  measurementId: "G-1LEDTZ6E9X"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    const adminUID = "hpvlaLV2nuaGXHwe3SO4SDP4eeL2";  // Replace with your admin UID
+
+    let selectedUserId = null;
+    let messagesUnsub = null;
+    let calendarUnsub = null;
+    let usersUnsub = null;
+
+    const userItemsEl = document.getElementById('userItems');
+    const chatWithEl = document.getElementById('chatWith');
+    const calendarButton = document.getElementById('calendarButton');
+    const messagesEl = document.getElementById('messages');
+    const messageForm = document.getElementById('messageForm');
+    const messageInput = document.getElementById('messageInput');
+
+    auth.onAuthStateChanged(async user => {
+      if (!user) return location.href = "index.html";
+      if (user.uid !== adminUID) return location.href = "index.html";
+      loadUsersList();
+    });
+
+    function loadUsersList() {
+      usersUnsub = db.collection('users').onSnapshot(snapshot => {
+        userItemsEl.innerHTML = '';
+        snapshot.forEach(doc => {
+          const user = doc.data();
+          const userId = doc.id;
+
+          getLastMessageAndNotifications(userId).then(({lastMsgTime, unreadMsgCount, unreadCalCount}) => {
+            const lastTimeText = lastMsgTime ? new Date(lastMsgTime.seconds * 1000).toLocaleString() : "No messages";
+            const badgeMsgs = unreadMsgCount > 0 ? `<span class="notificationBadge">${unreadMsgCount}</span>` : '';
+            const badgeCal = unreadCalCount > 0 ? `<span class="notificationBadge" title="New Calendar Events">📅</span>` : '';
+
+            const div = document.createElement('button');
+            div.className = 'list-group-item list-group-item-action bg-dark text-light text-start userItem';
+            if (userId === selectedUserId) div.classList.add('active');
+            div.innerHTML = `
+              <div class="d-flex justify-content-between">
+                <div>
+                  <strong>${user.name}</strong><br>
+                  <small>${lastTimeText}</small>
+                </div>
+                <div>${badgeMsgs} ${badgeCal}</div>
+              </div>
+            `;
+            div.onclick = () => selectUser(userId, user.name);
+            userItemsEl.appendChild(div);
+          });
+        });
+      });
+    }
+
+    async function getLastMessageAndNotifications(userId) {
+      let lastMsgTime = null, unreadMsgCount = 0, unreadCalCount = 0;
+      const chatId = [adminUID, userId].sort().join('_');
+      const msgsRef = db.collection('messages').doc(chatId).collection('msgs');
+
+      const lastMsgSnapshot = await msgsRef.orderBy('timestamp', 'desc').limit(1).get();
+      if (!lastMsgSnapshot.empty) lastMsgTime = lastMsgSnapshot.docs[0].data().timestamp;
+
+      const unreadSnapshot = await msgsRef.where('to', '==', adminUID).where('from', '==', userId).where('read', '==', false).get();
+      unreadMsgCount = unreadSnapshot.size;
+
+      const calRef = db.collection('calendars').doc(userId);
+      const calDoc = await calRef.get();
+      if (calDoc.exists && calDoc.data().unreadByAdmin) unreadCalCount = calDoc.data().unreadByAdmin;
+
+      return { lastMsgTime, unreadMsgCount, unreadCalCount };
+    }
+
+    function selectUser(userId, userName) {
+      selectedUserId = userId;
+      chatWithEl.textContent = `Chat with ${userName}`;
+      calendarButton.classList.remove('d-none');
+      messageForm.classList.remove('d-none');
+      messagesEl.innerHTML = '';
+      calendarButton.onclick = () => window.location.href = `calendar.html?userId=${selectedUserId}`;
+      if (messagesUnsub) messagesUnsub();
+      messagesUnsub = listenMessages(selectedUserId);
+      if (calendarUnsub) calendarUnsub();
+      calendarUnsub = listenCalendarUpdates(selectedUserId);
+    }
+
+    function listenMessages(userId) {
+      const chatId = [adminUID, userId].sort().join('_');
+      const msgsRef = db.collection('messages').doc(chatId).collection('msgs').orderBy('timestamp', 'asc');
+      return msgsRef.onSnapshot(snapshot => {
+        messagesEl.innerHTML = '';
+        snapshot.forEach(doc => {
+          const msg = doc.data();
+          const msgDiv = document.createElement('div');
+          msgDiv.classList.add('message', msg.from === adminUID ? 'admin' : 'user');
+          msgDiv.textContent = msg.text;
+          messagesEl.appendChild(msgDiv);
+        });
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        snapshot.docs.forEach(doc => {
+          const msg = doc.data();
+          if (msg.to === adminUID && !msg.read) doc.ref.update({ read: true });
+        });
+      });
+    }
+
+    function listenCalendarUpdates(userId) {
+      const calRef = db.collection('calendars').doc(userId);
+      return calRef.onSnapshot(doc => {
+        if (doc.exists && selectedUserId === userId && doc.data().unreadByAdmin > 0) {
+          calRef.update({ unreadByAdmin: 0 });
+        }
+        loadUsersList();
+      });
+    }
+
+    messageForm.addEventListener('submit', async e => {
+      e.preventDefault();
+      if (!selectedUserId) return alert("Select a user first!");
+      const text = messageInput.value.trim();
+      if (!text) return;
+      const chatId = [adminUID, selectedUserId].sort().join('_');
+      const msgsRef = db.collection('messages').doc(chatId).collection('msgs');
+      await msgsRef.add({
+        text, from: adminUID, to: selectedUserId,
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+        read: false
+      });
+      messageInput.value = '';
+    });
+  </script>
+
+</body>
+</html>
